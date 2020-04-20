@@ -29,6 +29,7 @@
 //! Note that Slow Start can use HyStart++ when enabled.
 
 use std::cmp;
+
 use std::time::Instant;
 
 use crate::packet;
@@ -43,6 +44,7 @@ pub static RENO: CongestionControlOps = CongestionControlOps {
     on_packet_acked,
     congestion_event,
     collapse_cwnd,
+    undo_cwnd,
 };
 
 pub fn on_packet_sent(r: &mut Recovery, sent_bytes: usize, _now: Instant) {
@@ -118,6 +120,11 @@ fn congestion_event(
 
 pub fn collapse_cwnd(r: &mut Recovery) {
     r.congestion_window = recovery::MINIMUM_WINDOW;
+}
+
+pub fn undo_cwnd(r: &mut Recovery) {
+    r.congestion_window = cmp::max(r.congestion_window, r.congestion_window_prev);
+    r.ssthresh = cmp::max(r.ssthresh, r.ssthresh_prev);
 }
 
 #[cfg(test)]
