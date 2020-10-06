@@ -1,4 +1,4 @@
-From 6b265aa6ff74d0e61ca2bfd8014d02fe014f5ca6 Mon Sep 17 00:00:00 2001
+From 56e04ade828bc0efe037b0eb3942db6c1b879e06 Mon Sep 17 00:00:00 2001
 From: Alessandro Ghedini <alessandro@cloudflare.com>
 Date: Mon, 20 Jul 2020 13:26:10 +0100
 Subject: [PATCH] Initial QUIC and HTTP/3 implementation using quiche
@@ -14,7 +14,7 @@ Subject: [PATCH] Initial QUIC and HTTP/3 implementation using quiche
  auto/options                            |    9 +
  src/core/ngx_connection.h               |    7 +
  src/core/ngx_core.h                     |    3 +
- src/event/ngx_event_quic.c              |  575 ++++++
+ src/event/ngx_event_quic.c              |  598 ++++++
  src/event/ngx_event_quic.h              |   49 +
  src/event/ngx_event_udp.c               |    8 +
  src/http/modules/ngx_http_ssl_module.c  |   13 +-
@@ -31,7 +31,7 @@ Subject: [PATCH] Initial QUIC and HTTP/3 implementation using quiche
  src/http/v3/ngx_http_v3_filter_module.c |   68 +
  src/http/v3/ngx_http_v3_module.c        |  286 +++
  src/http/v3/ngx_http_v3_module.h        |   34 +
- 27 files changed, 3694 insertions(+), 11 deletions(-)
+ 27 files changed, 3717 insertions(+), 11 deletions(-)
  create mode 100644 auto/lib/quiche/conf
  create mode 100644 auto/lib/quiche/make
  create mode 100644 src/event/ngx_event_quic.c
@@ -338,10 +338,10 @@ index 93ca9174d..d0441f034 100644
  #include <ngx_module.h>
 diff --git a/src/event/ngx_event_quic.c b/src/event/ngx_event_quic.c
 new file mode 100644
-index 000000000..b9cc9ec0a
+index 000000000..67f4d3646
 --- /dev/null
 +++ b/src/event/ngx_event_quic.c
-@@ -0,0 +1,575 @@
+@@ -0,0 +1,598 @@
 +
 +/*
 + * Copyright (C) Cloudflare, Inc.
@@ -675,7 +675,13 @@ index 000000000..b9cc9ec0a
 +            return;
 +        }
 +
-+        if (ngx_quic_send_udp_packet(c, out, written) == NGX_ERROR) {
++        int rc = ngx_quic_send_udp_packet(c, out, written);
++
++        if (rc == NGX_AGAIN) {
++            break;
++        }
++
++        if (rc == NGX_ERROR) {
 +            ngx_log_debug0(NGX_LOG_DEBUG_EVENT, c->log, 0,
 +                           "failed to send quic packet");
 +
@@ -892,8 +898,9 @@ index 000000000..b9cc9ec0a
 +static ngx_int_t
 +ngx_quic_send_udp_packet(ngx_connection_t *c, uint8_t *buf, size_t len)
 +{
-+    ngx_buf_t    out_buf = {0};
-+    ngx_chain_t  out_chain = {0};
++    ngx_buf_t     out_buf = {0};
++    ngx_chain_t   out_chain = {0};
++    ngx_chain_t  *cl;
 +
 +    /* The send_chain() API takes an ngx_chain_t parameter instead of a simple
 +     * buffer, so we need to initialize the chain such that it contains only a
@@ -911,8 +918,24 @@ index 000000000..b9cc9ec0a
 +    out_chain.buf = &out_buf;
 +    out_chain.next = NULL;
 +
-+    if (c->send_chain(c, &out_chain, 0) == NGX_CHAIN_ERROR) {
-+        return NGX_ERROR;
++    cl = c->send_chain(c, &out_chain, 0);
++
++    if (cl != NULL) {
++        return NGX_AGAIN;
++    }
++
++    if (cl == NGX_CHAIN_ERROR) {
++        switch (ngx_errno) {
++
++        /* Ignore socket running out of memory. This will trigger a packet loss,
++         * which in turn should lower the send rate. */
++        case ENOBUFS:
++            c->write->error = 0;
++            return NGX_AGAIN;
++
++        default:
++            return NGX_ERROR;
++        }
 +    }
 +
 +    return NGX_OK;
