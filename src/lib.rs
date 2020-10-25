@@ -313,6 +313,9 @@ const DEFAULT_MAX_DGRAM_QUEUE_LEN: usize = 0;
 // frames size. We enforce the recommendation for forward compatibility.
 const MAX_DGRAM_FRAME_SIZE: u64 = 65536;
 
+// The length of the payload length field.
+const PAYLOAD_LENGTH_LEN: usize = 2;
+
 /// A specialized [`Result`] type for quiche operations.
 ///
 /// This type is used throughout quiche's public API for any operation that
@@ -1086,10 +1089,11 @@ pub fn version_is_supported(version: u32) -> bool {
 /// there is no room to add the frame in the packet. You may retry to add the
 /// frame later.
 macro_rules! push_frame_to_pkt {
-    ($frames:expr, $frame:expr, $payload_len: expr, $left:expr) => {{
+    ($out:expr, $frames:expr, $frame:expr, $left:expr) => {{
         if $frame.wire_len() <= $left {
-            $payload_len += $frame.wire_len();
             $left -= $frame.wire_len();
+
+            $frame.to_bytes(&mut $out)?;
 
             $frames.push($frame);
 
@@ -2105,7 +2109,19 @@ impl Connection {
         let mut in_flight = false;
         let mut has_data = false;
 
-        let mut payload_len = 0;
+        let header_offset = b.off();
+
+        // Reserve space for payload length in advance. Since we don't yet know
+        // what the final length will be, we reserver 2 bytes in all cases.
+        //
+        // Only long header packets have an explicit length field.
+        if pkt_type != packet::Type::Short {
+            b.skip(PAYLOAD_LENGTH_LEN)?;
+        }
+
+        packet::encode_pkt_num(pn, &mut b)?;
+
+        let payload_offset = b.off();
 
         // Create ACK frame.
         if self.pkt_num_spaces[epoch].recv_pkt_need_ack.len() > 0 &&
@@ -2125,7 +2141,7 @@ impl Connection {
                 ranges: self.pkt_num_spaces[epoch].recv_pkt_need_ack.clone(),
             };
 
-            if push_frame_to_pkt!(frames, frame, payload_len, left) {
+            if push_frame_to_pkt!(b, frames, frame, left) {
                 self.pkt_num_spaces[epoch].ack_elicited = false;
             }
         }
@@ -2138,7 +2154,7 @@ impl Connection {
             {
                 let frame = frame::Frame::HandshakeDone;
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     self.handshake_done_sent = true;
 
                     ack_eliciting = true;
@@ -2152,7 +2168,7 @@ impl Connection {
                     max: self.streams.max_streams_bidi_next(),
                 };
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     self.streams.update_max_streams_bidi();
 
                     ack_eliciting = true;
@@ -2166,7 +2182,7 @@ impl Connection {
                     max: self.streams.max_streams_uni_next(),
                 };
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     self.streams.update_max_streams_uni();
 
                     ack_eliciting = true;
@@ -2180,7 +2196,7 @@ impl Connection {
                     max: self.max_rx_data_next,
                 };
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     self.almost_full = false;
 
                     // Commits the new max_rx_data limit.
@@ -2195,7 +2211,7 @@ impl Connection {
             if let Some(limit) = self.blocked_limit {
                 let frame = frame::Frame::DataBlocked { limit };
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     self.blocked_limit = None;
 
                     ack_eliciting = true;
@@ -2221,7 +2237,7 @@ impl Connection {
                     max: stream.recv.max_data_next(),
                 };
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     stream.recv.update_max_data();
 
                     self.streams.mark_almost_full(stream_id, false);
@@ -2240,7 +2256,7 @@ impl Connection {
             {
                 let frame = frame::Frame::StreamDataBlocked { stream_id, limit };
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     self.streams.mark_blocked(stream_id, false, 0);
 
                     ack_eliciting = true;
@@ -2257,7 +2273,7 @@ impl Connection {
                 reason: Vec::new(),
             };
 
-            if push_frame_to_pkt!(frames, frame, payload_len, left) {
+            if push_frame_to_pkt!(b, frames, frame, left) {
                 self.draining_timer = Some(now + (self.recovery.pto() * 3));
 
                 ack_eliciting = true;
@@ -2273,7 +2289,7 @@ impl Connection {
                     reason: self.app_reason.clone(),
                 };
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     self.draining_timer = Some(now + (self.recovery.pto() * 3));
 
                     ack_eliciting = true;
@@ -2288,7 +2304,7 @@ impl Connection {
                 data: challenge.clone(),
             };
 
-            if push_frame_to_pkt!(frames, frame, payload_len, left) {
+            if push_frame_to_pkt!(b, frames, frame, left) {
                 self.challenge = None;
 
                 ack_eliciting = true;
@@ -2309,7 +2325,7 @@ impl Connection {
 
             let frame = frame::Frame::Crypto { data: crypto_buf };
 
-            if push_frame_to_pkt!(frames, frame, payload_len, left) {
+            if push_frame_to_pkt!(b, frames, frame, left) {
                 ack_eliciting = true;
                 in_flight = true;
                 has_data = true;
@@ -2329,12 +2345,7 @@ impl Connection {
                             Some(data) => {
                                 let frame = frame::Frame::Datagram { data };
 
-                                if push_frame_to_pkt!(
-                                    frames,
-                                    frame,
-                                    payload_len,
-                                    left
-                                ) {
+                                if push_frame_to_pkt!(b, frames, frame, left) {
                                     ack_eliciting = true;
                                     in_flight = true;
                                 }
@@ -2391,7 +2402,7 @@ impl Connection {
                     data: stream_buf,
                 };
 
-                if push_frame_to_pkt!(frames, frame, payload_len, left) {
+                if push_frame_to_pkt!(b, frames, frame, left) {
                     ack_eliciting = true;
                     in_flight = true;
                     has_data = true;
@@ -2424,7 +2435,7 @@ impl Connection {
         {
             let frame = frame::Frame::Ping;
 
-            if push_frame_to_pkt!(frames, frame, payload_len, left) {
+            if push_frame_to_pkt!(b, frames, frame, left) {
                 ack_eliciting = true;
                 in_flight = true;
             }
@@ -2444,43 +2455,43 @@ impl Connection {
 
         // Pad the client's initial packet.
         if !self.is_server && pkt_type == packet::Type::Initial {
+            let payload_len = b.off() - payload_offset;
             let pkt_len = pn_len + payload_len + crypto_overhead;
 
             let frame = frame::Frame::Padding {
                 len: cmp::min(MIN_CLIENT_INITIAL_LEN - pkt_len, left),
             };
 
-            payload_len += frame.wire_len();
-
-            frames.push(frame);
-
-            in_flight = true;
+            if push_frame_to_pkt!(b, frames, frame, left) {
+                in_flight = true;
+            }
         }
 
         // Pad payload so that it's always at least 4 bytes.
-        if payload_len < PAYLOAD_MIN_LEN {
+        if b.off() - payload_offset < PAYLOAD_MIN_LEN {
+            let payload_len = b.off() - payload_offset;
+
             let frame = frame::Frame::Padding {
                 len: PAYLOAD_MIN_LEN - payload_len,
             };
 
-            payload_len += frame.wire_len();
-
-            frames.push(frame);
-
-            in_flight = true;
+            #[allow(unused_assignments)]
+            if push_frame_to_pkt!(b, frames, frame, left) {
+                in_flight = true;
+            }
         }
 
-        payload_len += crypto_overhead;
+        let payload_len = b.off() - payload_offset;
+        let payload_len = payload_len + crypto_overhead;
 
-        // Only long header packets have an explicit length field.
+        // Fill in payload length.
         if pkt_type != packet::Type::Short {
             let len = pn_len + payload_len;
-            b.put_varint(len as u64)?;
+
+            let (_, mut payload_with_len) = b.split_at(header_offset)?;
+            payload_with_len
+                .put_varint_with_len(len as u64, PAYLOAD_LENGTH_LEN)?;
         }
-
-        packet::encode_pkt_num(pn, &mut b)?;
-
-        let payload_offset = b.off();
 
         trace!(
             "{} tx pkt {:?} len={} pn={}",
@@ -2510,11 +2521,8 @@ impl Connection {
             q.add_event(packet_sent_ev).ok();
         });
 
-        // Encode frames into the output packet.
         for frame in &mut frames {
             trace!("{} tx frm {:?}", self.trace_id, frame);
-
-            frame.to_bytes(&mut b)?;
 
             qlog_with!(self.qlog_streamer, q, {
                 q.add_frame(frame.to_qlog(), false).ok();
