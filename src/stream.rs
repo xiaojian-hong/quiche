@@ -27,6 +27,7 @@
 use std::cmp;
 
 use std::collections::hash_map;
+
 use std::collections::BTreeMap;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
@@ -881,7 +882,7 @@ impl RecvBuf {
 #[derive(Debug, Default)]
 pub struct SendBuf {
     /// Chunks of data to be sent, ordered by offset.
-    data: BinaryHeap<RangeBuf>,
+    data: VecDeque<RangeBuf>,
 
     /// The maximum offset of data buffered in the stream.
     off: u64,
@@ -985,7 +986,29 @@ impl SendBuf {
             return Ok(());
         }
 
-        self.data.push(buf);
+        match self.data.back() {
+            None => self.data.push_back(buf),
+
+            Some(back) =>
+                if buf.off >= back.max_off() {
+                    self.data.push_back(buf);
+                } else {
+                    let mut insert_at = None;
+
+                    for i in 0..self.data.len() {
+                        if buf.off < self.data[i].off {
+                            insert_at = Some(i);
+                            break;
+                        }
+                    }
+
+                    match insert_at {
+                        Some(insert_at) => self.data.insert(insert_at, buf),
+
+                        None => self.data.push_back(buf),
+                    }
+                },
+        }
 
         Ok(())
     }
@@ -998,14 +1021,14 @@ impl SendBuf {
         out.off = self.off;
 
         let mut out_len = max_data;
-        let mut out_off = self.data.peek().map_or_else(|| out.off, RangeBuf::off);
+        let mut out_off = self.off_front();
 
         while out_len > 0 &&
             self.ready() &&
             self.off_front() == out_off &&
             self.off_front() < self.max_data
         {
-            let mut buf = match self.data.peek_mut() {
+            let buf = match self.data.front_mut() {
                 Some(v) => v,
 
                 None => break,
@@ -1031,7 +1054,7 @@ impl SendBuf {
                 break;
             }
 
-            std::collections::binary_heap::PeekMut::pop(buf);
+            self.data.pop_front();
         }
 
         // Override the `fin` flag set for the output buffer by matching the
@@ -1076,7 +1099,7 @@ impl SendBuf {
 
     /// Returns the lowest offset of data buffered.
     pub fn off_front(&self) -> u64 {
-        match self.data.peek() {
+        match self.data.front() {
             Some(v) => v.off(),
 
             None => self.off,
