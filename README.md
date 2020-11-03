@@ -10,8 +10,8 @@ specified by the [IETF]. It provides a low level API for processing QUIC packets
 and handling connection state. The application is responsible for providing I/O
 (e.g. sockets handling) as well as an event loop with support for timers.
 
-A live QUIC server based on quiche is available at ``https://quic.tech:4433/``,
-and an HTTP/3 one at ``https://quic.tech:8443/``, that can be used for
+A live QUIC server based on quiche is available at `https://quic.tech:4433/`,
+and an HTTP/3 one at `https://quic.tech:8443/`, that can be used for
 experimentation.
 
 For more information on how quiche came about and some insights into its design
@@ -21,8 +21,7 @@ you can read a [post] on Cloudflare's blog that goes into some more detail.
 [ietf]: https://quicwg.org/
 [post]: https://blog.cloudflare.com/enjoy-a-slice-of-quic-and-rust/
 
-Who uses quiche?
-----------------
+## Who uses quiche?
 
 ### Cloudflare
 
@@ -41,8 +40,7 @@ provide support for HTTP/3.
 [curl-http3]: https://github.com/curl/curl/blob/master/docs/HTTP3.md#quiche-version
 [nginx-http3]: https://github.com/cloudflare/quiche/tree/master/extras/nginx
 
-Getting Started
----------------
+## Getting Started
 
 ### Command-line apps
 
@@ -59,6 +57,14 @@ while the server can be run as follows:
 
 ```bash
  $ cargo run --manifest-path=tools/apps/Cargo.toml --bin quiche-server -- \
+      --cert tools/apps/src/bin/cert.crt \
+      --key tools/apps/src/bin/cert.key
+```
+
+the upd server (non-http) can be run as follows:
+
+```bash
+ $ RUST_LOG=info cargo run --manifest-path=tools/apps/Cargo.toml --bin udp-server -- \
       --cert tools/apps/src/bin/cert.crt \
       --key tools/apps/src/bin/cert.key
 ```
@@ -221,7 +227,7 @@ receiving HTTP requests and responses on top of the QUIC transport protocol.
 [`stream_send()`]: https://docs.quic.tech/quiche/struct.Connection.html#method.stream_send
 [`readable()`]: https://docs.quic.tech/quiche/struct.Connection.html#method.readable
 [`stream_recv()`]: https://docs.quic.tech/quiche/struct.Connection.html#method.stream_recv
-[HTTP/3 module]: https://docs.quic.tech/quiche/h3/index.html
+[http/3 module]: https://docs.quic.tech/quiche/h3/index.html
 
 Have a look at the [examples/] directory for more complete examples on how to use
 the quiche API, including examples on how to use quiche in C/C++ applications
@@ -229,22 +235,20 @@ the quiche API, including examples on how to use quiche in C/C++ applications
 
 [examples/]: examples/
 
-Calling quiche from C/C++
--------------------------
+## Calling quiche from C/C++
 
 quiche exposes a [thin C API] on top of the Rust API that can be used to more
 easily integrate quiche into C/C++ applications (as well as in other languages
 that allow calling C APIs via some form of FFI). The C API follows the same
 design of the Rust one, modulo the constraints imposed by the C language itself.
 
-When running ``cargo build``, a static library called ``libquiche.a`` will be
+When running `cargo build`, a static library called `libquiche.a` will be
 built automatically alongside the Rust one. This is fully stand-alone and can
 be linked directly into C/C++ applications.
 
-[thin C API]: https://github.com/cloudflare/quiche/blob/master/include/quiche.h
+[thin c api]: https://github.com/cloudflare/quiche/blob/master/include/quiche.h
 
-Building
---------
+## Building
 
 quiche requires Rust 1.47 or later to build. The latest stable Rust release can
 be installed using [rustup](https://rustup.rs/).
@@ -277,13 +281,13 @@ documentation](https://github.com/google/boringssl/blob/master/BUILDING.md) has
 more details.
 
 In alternative you can use your own custom build of BoringSSL by configuring
-the BoringSSL directory with the ``QUICHE_BSSL_PATH`` environment variable:
+the BoringSSL directory with the `QUICHE_BSSL_PATH` environment variable:
 
 ```bash
  $ QUICHE_BSSL_PATH="/path/to/boringssl" cargo build --examples
 ```
 
-[BoringSSL]: https://boringssl.googlesource.com/boringssl/
+[boringssl]: https://boringssl.googlesource.com/boringssl/
 
 ### Building for Android
 
@@ -306,7 +310,7 @@ Note that the minimum API level is 21 for all target architectures.
 
 Depending on the NDK version used, you can take one of the following procedures:
 
-[Android NDK]: https://developer.android.com/ndk
+[android ndk]: https://developer.android.com/ndk
 
 #### NDK version >= 19
 
@@ -419,11 +423,10 @@ Provides a server and client installed in /usr/local/bin.
 
 Provides the script to test quiche within the [quic-interop-runner](https://github.com/marten-seemann/quic-interop-runner).
 
-Copyright
----------
+## Copyright
 
 Copyright (C) 2018-2019, Cloudflare, Inc.
 
 See [COPYING] for the license.
 
-[COPYING]: https://github.com/cloudflare/quiche/tree/master/COPYING
+[copying]: https://github.com/cloudflare/quiche/tree/master/COPYING
