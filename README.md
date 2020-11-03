@@ -53,6 +53,12 @@ The client can be run as follows:
  $ cargo run --manifest-path=tools/apps/Cargo.toml --bin quiche-client -- https://quic.tech:8443/
 ```
 
+The udp client (non-http) can be run as follows:
+
+```bash
+ $ RUST_LOG=info cargo run --manifest-path=tools/apps/Cargo.toml --bin udp-client -- 127.0.0.1:4433 --no-verify
+```
+
 while the server can be run as follows:
 
 ```bash
